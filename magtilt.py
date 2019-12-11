@@ -1,3 +1,6 @@
+## tilt compensated compass. uses adafruit_lsm303 magnetometer/accelerometer. needs hard iron calibration for full functionality.
+
+
 import RPi.GPIO as GPIO
 import time
 from math import *
