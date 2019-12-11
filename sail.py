@@ -1,3 +1,6 @@
+## controls a wingsail actuated by a DS3225mg digital servo.
+## an adafruit_lsm303DLHC magnetometer/accelerometer and magnet combine to make a windvane.
+
 import RPi.GPIO as GPIO
 import time
 from math import *
