@@ -1,4 +1,4 @@
-
+# uses adafruit ultimate gps breakout v3 
 from math import *
 import time
 import adafruit_gps
