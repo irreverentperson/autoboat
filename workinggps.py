@@ -1,9 +1,31 @@
-# uses adafruit ultimate gps breakout v3 
+
 from math import *
 import time
 import adafruit_gps
 import serial
 import RPi.GPIO as GPIO
+
+
+
+
+
+## magnetometer/accelerometer is Adafruit_LSM303DLHC
+import Adafruit_LSM303
+lsm303 = Adafruit_LSM303.LSM303()
+
+## Set RPi GPIO pins to board numbering
+GPIO.setmode(GPIO.BOARD)
+## Set board pin 7 to pinout
+GPIO.setup(7,GPIO.OUT)
+## Set pin 7 to pulse width modulation @50 hz
+pwm = GPIO.PWM(7,50)
+pwm.start(7)
+## define rudder left, straight, right
+left = 2
+straight = 6.7
+right = 11.5
+degrees = (right - left)/180
+
 
 uart = serial.Serial("/dev/ttyS0", baudrate=9600, timeout=3000)
 
@@ -21,15 +43,51 @@ number2 = 0
 start_route = 0
 current_route = 0
 corrected_route = 0
-locations = {'currentlocation':{'latitude':0,'longitude':0},'previouslocation':{'latitude':0,'longitude':0}}
-def compensate_drift(*args,**kwargs):
-	global locations
-	global last_print
-	global start_route
-	global current_route
-	global corrected_route
+locations = {'currentlocation':{'latitude':0,'longitude':0},'previouslocation':{'latitude':0,'longitude':0}, 1:{'latitude':37.2,'longitude':-122.2}}
+upwind = False
+wind = 0
+waypoint = 0
+def sailwing(*args, **kwargs):
 
-	# comensate for drift if there is any
+	global lsm303, pwm, left, straight, right, degrees, upwind, wind
+
+	#setup magnetometer/accelerometer to read all
+	accel, mag = lsm303.read()
+	mag_x, mag_y, mag_z = mag
+	#convert magnetometer gauss readings to compass heading
+	compass = atan2(mag_y,mag_x) * (180/pi)
+	wind = compass
+#	tilt= atan2(accel_y,accel_x) * (180/pi)
+	if compass<0:
+		wind +=360
+	#trim sailwing
+	if wind > 15 and wind <= 105:
+		sail = 11.5 - (wind + 75) * degrees
+		pwm.ChangeDutyCycle(sail)
+		upwind = False
+	if wind > 105 and wind <= 180:
+		sail = 2
+		pwm.ChangeDutyCycle(sail)
+		upwind = False
+	if wind > 180 and wind <= 255:
+		sail = 11.5
+		pwm.ChangeDutyCycle(sail)
+		upwind = False
+	if wind > 255 and wind <= 345:
+		sail = 11.5 - (wind - 255) * degrees
+		pwm.ChangeDutyCycle(sail)
+		upwind = False
+	if wind > 345 or wind < 15:
+		sail = straight
+		upwind = True
+	print('wind: ' + str(wind))
+#	print('sail: ' + str(sail/degrees))
+
+
+def compensate_drift(*args,**kwargs):
+	global locations, last_print, start_route, current_route, corrected_route, upwind, wind
+
+	# compensate for drift if there is any
 	if current_route != start_route:
 		if start_route < current_route:
 			corrected_route = (current_route-start_route) + current_route
@@ -40,28 +98,33 @@ def compensate_drift(*args,**kwargs):
 		if corrected_route > 360:
 			corrected_route -= 360
 		print('start_route: ' + str(start_route))
-		print('current_route: ' + str(current_route))
 		print('corrected_route: ' + str(corrected_route))
-def navigate(*args,**kwargs):
 
-	global locations
-	global last_print
-	global start_route
-	global current_route
-	global number2
+	print('current_route: ' + str(current_route))
+
+def next_waypoint(*args,**kwargs):
+	global locations, waypoint, number2
+
+	# if current location is less than .00006 degrees (22 feet) continue to the next waypoint
+	if abs(locations['currentlocation']['latitude'] - locations[waypoint]['latitude']) < .00006 and abs(locations['currentlocation']['longitude'] - locations[waypoint]['longitude']) < .00006:
+		waypoint +=1
+		number2 = 0
+
+def navigate(*args,**kwargs):
+	global locations, last_print, start_route, current_route, number2, upwind, wind
 
 	timer = last_print
 	# set waypoint
-	locations['waypoint1'] = {'latitude': 37.4632,'longitude': -122.4269}
+
 	# find heading from current location to waypoint1
-	x = locations['waypoint1']['latitude'] - locations['currentlocation']['latitude']
-	y = locations['waypoint1']['longitude'] - locations['currentlocation']['longitude']
+	x = locations[waypoint]['latitude'] - locations['currentlocation']['latitude']
+	y = locations[waypoint]['longitude'] - locations['currentlocation']['longitude']
 	current_route = int(atan2(y,x) *180/pi)
 	if current_route <=0:
 		current_route = current_route + 360
 
 #	print('current_route: ' + str(current_route))
-	print('timer: ' + str(timer))
+#	print('timer: ' + str(timer))
 	if number2 < 1:
 		start_route = current_route
 		number2 = 1
@@ -76,12 +139,13 @@ while True:
 	if not gps.has_fix:
 	# Try again if we don't have a fix yet.
 		print('Waiting for fix...')
-		time.sleep(1)
+		sailwing()
+		time.sleep(.5)
 		continue
 	# We have a fix! (gps.has_fix is true)
 
 	print('=' * 40)  # Print a separator line.
-	print('Fix timestamp: {}/{}/{} {:02}:{:02}:{:02}'.format(
+	print('gps_timestamp: {}/{}/{} {:02}:{:02}:{:02}'.format(
 		gps.timestamp_utc.tm_mon,
 		gps.timestamp_utc.tm_mday,
 		gps.timestamp_utc.tm_year,
@@ -112,14 +176,17 @@ while True:
 	heading = atan2(currenty,currentx) * 180/pi
 	if heading <= 0:
 		heading += 360
-	print('heading: ' + str(heading))
-#	print('current location: ' + str(locations['currentlocation']))
-#	print('previous location: ' + str(locations['previouslocation']))
-	print('locations{}: ' + str(locations))
+	print('actual heading: ' + str(heading))
+	print('current location: ' + str(locations['currentlocation']))
+
 
 	# log starting location
 	if number < 1:
-		locations['start'] = {'latitude':latitude,'longitude':longitude}
+		locations[0] = {'latitude':latitude,'longitude':longitude}
 		number+=1
 	navigate()
+	sailwing()
+	print('waypoint: ' + str(waypoint) + str(locations[waypoint]))
+	next_waypoint()
+
 	time.sleep(.5)
